@@ -1,126 +1,281 @@
 <!doctype html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <title>BRMS-lite Console</title>
-    <link rel="stylesheet" href="/assets/styles.css" />
-  </head>
-  <body>
-    <div class="container">
-      <div class="header">
-        <h1>BRMS-lite Console</h1>
-        <p>Interfaz moderna para gestionar y simular grafos de reglas de negocio</p>
+
+<head>
+  <meta charset="utf-8" />
+  <title>BRMS-lite Console</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>BRMS Console</h1>
+        <p style="margin: 4px 0 0 0; color: var(--text-secondary);">Business Rules Management System</p>
       </div>
-
-      <div class="card">
-        <h2 class="card-title">Configuración</h2>
-        <div class="form-grid">
-          <div class="form-group">
-            <label for="graphId">ID del Grafo</label>
-            <input id="graphId" placeholder="test-graph" value="test-graph" />
-            <div class="help-text">Identificador único del grafo</div>
-          </div>
-          <div class="form-group">
-            <label for="env">Ambiente</label>
-            <input id="env" placeholder="dev" value="dev" />
-            <div class="help-text">Ambiente de ejecución (dev, staging, prod)</div>
-          </div>
-          <div class="form-group">
-            <label for="version">Versión</label>
-            <input id="version" type="number" placeholder="Opcional" />
-            <div class="help-text">Versión específica (vacío = última)</div>
-          </div>
-          <div class="form-group">
-            <label for="simSource">Fuente de Simulación</label>
-            <select id="simSource">
-              <option value="published">Versión Publicada</option>
-              <option value="latest">Última Versión</option>
-              <option value="version">Versión Específica</option>
-              <option value="inline">Desde Editor</option>
-            </select>
-            <div class="help-text">El ambiente solo aplica para “Versión Publicada”.</div>
-          </div>
-        </div>
-
-        <div class="checkbox-group">
-          <input type="checkbox" id="usePublished" checked />
-          <label for="usePublished">Cargar versión publicada si existe</label>
-        </div>
-
-        <div class="button-group">
-          <button id="btnList" class="btn btn-secondary icon-list">Listar Grafos</button>
-          <button id="btnGet" class="btn btn-primary icon-download">Cargar Grafo</button>
-          <button id="btnPublish" class="btn btn-success icon-publish">Publicar</button>
-          <button id="btnSave" class="btn btn-warning icon-save">Guardar Nueva Versión</button>
-          <button id="btnSim" class="btn btn-primary icon-play">Simular</button>
-          <button id="btnVersions" class="btn btn-secondary icon-list">Ver Versiones</button>
-          <button id="btnPublished" class="btn btn-secondary icon-list">Ver Publicadas</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2 class="card-title">Importar / Exportar</h2>
-        <div class="file-upload">
-          <input type="file" id="fileGraph" accept="application/json,.json" />
-          <label for="fileGraph" class="icon-file">Seleccionar archivo JSON</label>
-          <span class="help-text">Soporta JSON crudo o con wrapper { graph: {...} }</span>
-        </div>
-        <button id="btnExport" class="btn btn-secondary icon-export">Exportar Grafo</button>
-      </div>
-
-      <div class="content-grid">
-        <div class="card">
-          <h2 class="card-title">Editor de Grafo</h2>
-          <div class="textarea-container">
-            <textarea id="graph" placeholder="Pega aquí tu JSON del grafo..."></textarea>
-          </div>
-          <div class="help-text">JSON crudo con nodes/edges o formato { graph: {...} }</div>
-        </div>
-
-        <div class="card">
-          <h2 class="card-title">Payload de Prueba</h2>
-          <div class="textarea-container">
-            <textarea id="payload">{
-                "customerData": {
-                    "propertyValue": 350000,
-                    "propertyAge": 15,
-                    "propertyType": "single-family",
-                    "preferredDeductible": 1500
-                },
-                "riskAssessment": {
-                    "areaRiskLevel": "high",
-                    "claimHistory": {
-                        "pastClaims": 1,
-                        "severityLevel": "low"
-                    }
-                },
-                "additionalRisks": [
-                    {
-                        "type": "flood",
-                        "level": "medium"
-                    },
-                    {
-                        "type": "earthquake",
-                        "level": "low"
-                    }
-                ]
-            }</textarea>
-          </div>
-          <div class="help-text">Datos de entrada para la simulación</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2 class="card-title">Resultado</h2>
-        <div class="output-container" id="out"></div>
-      </div>
-
-      <div class="card">
-        <h2 class="card-title">Metadatos</h2>
-        <div class="output-container" id="metaOut"></div>
+      <div class="status">
+        <div id="connectionStatus" class="status-indicator status-online">● Connected</div>
+        <div id="currentProject" class="status-indicator badge-info">Project: Default</div>
       </div>
     </div>
 
-    <script defer src="/assets/app.js"></script>
-  </body>
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('documents')">📄 Documents</button>
+      <button class="tab" onclick="switchTab('releases')">🚀 Releases</button>
+      <button class="tab" onclick="switchTab('environments')">🌍 Environments</button>
+      <button class="tab" onclick="switchTab('simulate')">▶️ Simulate</button>
+      <button class="tab" onclick="switchTab('audit')">📋 Audit</button>
+    </div>
+
+    <!-- Documents Tab -->
+    <div id="tab-documents" class="tab-content active">
+      <div class="card">
+        <h2 class="card-title">Documents Management</h2>
+        <div class="btn-group">
+          <button id="btnListDocuments" class="btn btn-primary">📄 List Documents</button>
+          <button id="btnNewDocument" class="btn btn-success">➕ New Document</button>
+          <button onclick="showModal('modalUpload')" class="btn btn-secondary">📁 Upload</button>
+        </div>
+        <div id="documentsTable"></div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3 class="card-title">Document Editor</h3>
+          <div class="form-group">
+            <label for="documentKey">Document Key</label>
+            <input id="documentKey" placeholder="my-decision-graph" />
+          </div>
+          <div class="form-group">
+            <label for="documentContent">Graph Content</label>
+            <textarea id="documentContent" placeholder="Paste your decision graph JSON here..."></textarea>
+          </div>
+          <div class="form-group">
+            <label for="versionComment">Version Comment</label>
+            <input id="versionComment" placeholder="Added new validation rules..." />
+          </div>
+          <div class="btn-group">
+            <button id="btnLoadDocument" class="btn btn-info">📥 Load</button>
+            <button id="btnSaveVersion" class="btn btn-warning">💾 Save Version</button>
+            <button id="btnPublishDocument" class="btn btn-success">🚀 Publish</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Document Info</h3>
+          <div id="documentInfo">
+            <p>Select a document to view information</p>
+          </div>
+          <div id="versionsTable"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Releases Tab -->
+    <div id="tab-releases" class="tab-content">
+      <div class="card">
+        <h2 class="card-title">Release Management</h2>
+        <div class="btn-group">
+          <button id="btnListReleases" class="btn btn-primary">📦 List Releases</button>
+          <button id="btnCreateRelease" class="btn btn-success">🚀 Create Release</button>
+        </div>
+        <div id="releasesTable"></div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3 class="card-title">Create New Release</h3>
+          <div class="form-group">
+            <label for="releaseName">Release Name</label>
+            <input id="releaseName" placeholder="v1.2.0" />
+          </div>
+          <div class="form-group">
+            <label for="releaseDescription">Description</label>
+            <textarea id="releaseDescription" placeholder="What's new in this release..."
+              style="min-height: 100px;"></textarea>
+          </div>
+          <button id="btnSubmitRelease" class="btn btn-success">🚀 Create Release</button>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Release Files</h3>
+          <div id="releaseFiles">
+            <p>Select a release to view files</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Environments Tab -->
+    <div id="tab-environments" class="tab-content">
+      <div class="card">
+        <h2 class="card-title">Environment Management</h2>
+        <div class="btn-group">
+          <button id="btnListEnvironments" class="btn btn-primary">🌍 List Environments</button>
+          <button id="btnListWorkflows" class="btn btn-info">📋 Workflows</button>
+        </div>
+        <div id="environmentsTable"></div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3 class="card-title">Deploy to Environment</h3>
+          <div class="form-group">
+            <label for="deployEnvironment">Environment</label>
+            <select id="deployEnvironment">
+              <option value="">Select environment...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="deployRelease">Release</label>
+            <select id="deployRelease">
+              <option value="">Select release...</option>
+            </select>
+          </div>
+          <button id="btnDeployRelease" class="btn btn-warning">🚀 Deploy</button>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Deployment History</h3>
+          <div id="workflowsTable"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Simulate Tab -->
+    <div id="tab-simulate" class="tab-content">
+      <div class="card">
+        <h2 class="card-title">Rule Simulation</h2>
+        <div class="grid grid-3">
+          <div class="form-group">
+            <label for="simDocumentKey">Document</label>
+            <input id="simDocumentKey" placeholder="test-graph" value="test-graph" />
+          </div>
+          <div class="form-group">
+            <label for="simEnvironment">Environment</label>
+            <select id="simEnvironment">
+              <option value="dev">Development</option>
+              <option value="staging">Staging</option>
+              <option value="prod">Production</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="simVersion">Version (Optional)</label>
+            <input id="simVersion" type="number" placeholder="Leave empty for published" />
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3 class="card-title">Input Payload</h3>
+          <div class="form-group">
+            <textarea id="simulationPayload" placeholder='{"customerData": {"propertyValue": 350000}}'>{
+  "customerData": {
+    "propertyValue": 350000,
+    "propertyAge": 15,
+    "propertyType": "single-family",
+    "preferredDeductible": 1500
+  },
+  "riskAssessment": {
+    "areaRiskLevel": "high",
+    "claimHistory": {
+      "pastClaims": 1,
+      "severityLevel": "low"
+    }
+  },
+  "additionalRisks": [
+    {
+      "type": "flood",
+      "level": "medium"
+    },
+    {
+      "type": "earthquake", 
+      "level": "low"
+    }
+  ]
+}</textarea>
+          </div>
+          <button id="btnRunSimulation" class="btn btn-primary">▶️ Run Simulation</button>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Simulation Result</h3>
+          <div id="simulationOutput" class="output">Click "Run Simulation" to see results...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audit Tab -->
+    <div id="tab-audit" class="tab-content">
+      <div class="card">
+        <h2 class="card-title">Audit Log</h2>
+        <div class="grid grid-3">
+          <div class="form-group">
+            <label for="auditType">Type</label>
+            <select id="auditType">
+              <option value="">All types</option>
+              <option value="document">Document</option>
+              <option value="release">Release</option>
+              <option value="environment">Environment</option>
+              <option value="simulation">Simulation</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="auditAction">Action</label>
+            <select id="auditAction">
+              <option value="">All actions</option>
+              <option value="create">Create</option>
+              <option value="update">Update</option>
+              <option value="delete">Delete</option>
+              <option value="publish">Publish</option>
+              <option value="deploy">Deploy</option>
+              <option value="execute">Execute</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="auditLimit">Limit</label>
+            <select id="auditLimit">
+              <option value="50">50 records</option>
+              <option value="100">100 records</option>
+              <option value="200">200 records</option>
+            </select>
+          </div>
+        </div>
+        <div class="btn-group">
+          <button id="btnLoadAudit" class="btn btn-primary">📋 Load Audit Log</button>
+          <button id="btnExportAudit" class="btn btn-secondary">📤 Export</button>
+        </div>
+        <div id="auditTable"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modals -->
+  <div id="modalUpload" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Upload Document</h3>
+        <button class="btn-close" onclick="hideModal('modalUpload')">&times;</button>
+      </div>
+      <div class="form-group">
+        <label for="uploadFile">Select JSON File</label>
+        <input type="file" id="uploadFile" accept=".json" />
+      </div>
+      <div class="form-group">
+        <label for="uploadKey">Document Key</label>
+        <input id="uploadKey" placeholder="my-document" />
+      </div>
+      <div class="btn-group">
+        <button id="btnProcessUpload" class="btn btn-success">📁 Upload</button>
+        <button class="btn btn-secondary" onclick="hideModal('modalUpload')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script defer src="/assets/app.js"></script>
+</body>
+
 </html>

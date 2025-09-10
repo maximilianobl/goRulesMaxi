@@ -1,11 +1,10 @@
-// server.js — BRMS-lite con Postgres (versionado/publicación) + simulación
-// CommonJS
-
+// server.js — BRMS-lite extendido para simular funcionalidad completa
 const express = require('express');
 const cors = require('cors');
-const path = require('path'); // opcional si servís /public
+const path = require('path');
 const { Pool } = require('pg');
 const { ZenEngine } = require('@gorules/zen-engine');
+const crypto = require('crypto');
 
 const app = express();
 
@@ -27,303 +26,757 @@ app.use(express.json({ limit: '10mb' }));
 // ---------- DB ----------
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-async function migrate() {
-  const sql = `
-  CREATE TABLE IF NOT EXISTS graphs (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
-  );
-
-  CREATE TABLE IF NOT EXISTS graph_versions (
-    id BIGSERIAL PRIMARY KEY,
-    graph_id TEXT NOT NULL REFERENCES graphs(id) ON DELETE CASCADE,
-    version INT NOT NULL,
-    content JSONB NOT NULL,
-    comment TEXT,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(graph_id, version)
-  );
-
-  CREATE INDEX IF NOT EXISTS graph_versions_idx ON graph_versions (graph_id, version DESC);
-
-  CREATE TABLE IF NOT EXISTS published (
-    graph_id TEXT NOT NULL REFERENCES graphs(id) ON DELETE CASCADE,
-    env TEXT NOT NULL DEFAULT 'dev',
-    version INT NOT NULL,
-    published_at TIMESTAMPTZ DEFAULT now(),
-    PRIMARY KEY (graph_id, env)
-  );`;
-  await pool.query(sql);
-}
-migrate().catch(err => { console.error('DB migrate error:', err); process.exit(1); });
+// Middleware simple de autenticación (opcional)
+const authenticate = async (req, res, next) => {
+  // En un sistema real, verificarías el token JWT o similar
+  req.user = { 
+    id: '00000000-0000-0000-0000-000000000001',
+    organisationId: '00000000-0000-0000-0000-000000000001',
+    projectId: '00000000-0000-0000-0000-000000000001'
+  };
+  next();
+};
 
 // ---------- Helpers ----------
 const getEnv = (req) => (req.query.env || req.header('x-env') || 'dev');
+const getProject = (req) => (req.query.project || req.user?.projectId || '00000000-0000-0000-0000-000000000001');
 
-// Para GUARDAR: aceptamos {graph:{...}} o grafo crudo {nodes,edges}
-const extractGraphForSave = (body) => {
-  if (!body) return null;
-  if (body.graph) return body.graph;
-  if (body.nodes && body.edges) return body;
-  return null;
+const auditLog = async (type, action, refId, data, userId, projectId, ipAddress, userAgent) => {
+  try {
+    await pool.query(
+      `INSERT INTO audit_log (type, action, ref_id, data, user_id, project_id, 
+       organisation_id, ip_address, user_agent) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [type, action, refId, JSON.stringify(data), userId, projectId, 
+       '00000000-0000-0000-0000-000000000001', ipAddress, userAgent]
+    );
+  } catch (e) {
+    console.error('Audit log error:', e);
+  }
 };
 
-// Para SIMULAR: solo usamos graph inline si viene explícito
-const extractGraphForSim = (body) => {
-  if (!body) return null;
-  return body.graph ? body.graph : null;
-};
-
-async function listGraphs() {
-  const q = `
-    SELECT g.id,
-           COALESCE(g.name, g.id) AS name,
-           g.updated_at,
-           (SELECT MAX(version) FROM graph_versions v WHERE v.graph_id = g.id) AS latest_version
-    FROM graphs g
-    ORDER BY g.updated_at DESC, g.id ASC;
-  `;
-  const { rows } = await pool.query(q);
-  return rows;
-}
-
-async function upsertGraphNewVersion(id, content, comment) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(
-      'INSERT INTO graphs (id, name) VALUES ($1, $1) ON CONFLICT (id) DO UPDATE SET updated_at = now()',
-      [id]
-    );
-    const { rows } = await client.query(
-      'SELECT COALESCE(MAX(version), 0) + 1 AS v FROM graph_versions WHERE graph_id = $1',
-      [id]
-    );
-    const version = rows[0].v;
-    await client.query(
-      'INSERT INTO graph_versions (graph_id, version, content, comment) VALUES ($1, $2, $3::jsonb, $4)',
-      [id, version, JSON.stringify(content), comment || null]
-    );
-    await client.query('COMMIT');
-    return version;
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
+// ---------- Document Management ----------
+class DocumentService {
+  static async listDocuments(projectId) {
+    const { rows } = await pool.query(`
+      SELECT d.id, d.key, d.path, d.name, d.content_type, d.meta,
+             d.published_at, d.updated_at,
+             (SELECT COUNT(*) FROM document_version dv WHERE dv.document_id = d.id) as version_count,
+             (SELECT MAX(created_at) FROM document_version dv WHERE dv.document_id = d.id) as last_version_at
+      FROM "document" d
+      WHERE d.project_id = $1 AND d.deleted_at IS NULL
+      ORDER BY d.updated_at DESC
+    `, [projectId]);
+    return rows;
   }
-}
 
-async function getGraphVersion(id, version) {
-  const { rows } = await pool.query(
-    'SELECT content FROM graph_versions WHERE graph_id = $1 AND version = $2',
-    [id, version]
-  );
-  return rows[0]?.content || null;
-}
-
-async function getLatestGraph(id) {
-  const { rows } = await pool.query(
-    'SELECT content, version FROM graph_versions WHERE graph_id = $1 ORDER BY version DESC LIMIT 1',
-    [id]
-  );
-  return rows[0] ? { content: rows[0].content, version: rows[0].version } : null;
-}
-
-async function listVersions(id) {
-  const { rows } = await pool.query(
-    'SELECT version, comment, created_at FROM graph_versions WHERE graph_id = $1 ORDER BY version DESC',
-    [id]
-  );
-  return rows;
-}
-
-async function deleteGraph(id) {
-  await pool.query('DELETE FROM graphs WHERE id = $1', [id]);
-}
-
-async function setPublished(id, env, version) {
-  await pool.query(
-    'INSERT INTO published (graph_id, env, version) VALUES ($1, $2, $3) ' +
-    'ON CONFLICT (graph_id, env) DO UPDATE SET version = EXCLUDED.version, published_at = now()',
-    [id, env, version]
-  );
-}
-
-async function getPublishedVersion(id, env) {
-  const { rows } = await pool.query(
-    'SELECT version FROM published WHERE graph_id = $1 AND env = $2',
-    [id, env]
-  );
-  return rows[0]?.version || null;
-}
-
-// ---------- Endpoints ----------
-app.get('/api/health', (_req, res) => res.json({ ok: true }));
-
-// Lista de grafos
-app.get('/api/graphs', async (_req, res) => {
-  try {
-    const data = await listGraphs();
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+  static async getDocument(projectId, documentKey) {
+    const { rows } = await pool.query(`
+      SELECT d.*, dv.content, dv.id as version_id
+      FROM "document" d
+      LEFT JOIN document_version dv ON d.published_id = dv.id
+      WHERE d.project_id = $1 AND d.key = $2 AND d.deleted_at IS NULL
+    `, [projectId, documentKey]);
+    return rows[0] || null;
   }
-});
 
-// Crear nueva versión (body: {graph:{...}} o grafo crudo)
-app.post('/api/graphs/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const model = extractGraphForSave(req.body);
-    if (!model) return res.status(400).json({ error: 'graph is required' });
-    const comment = req.body?.comment;
-    const version = await upsertGraphNewVersion(id, model, comment);
-    res.json({ ok: true, id, version });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Obtener última o una versión específica (?version=N)
-app.get('/api/graphs/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const vq = req.query.version ? parseInt(String(req.query.version), 10) : null;
-    if (vq) {
-      const content = await getGraphVersion(id, vq);
-      return res.json(content || {});
+  static async createDocumentVersion(documentId, content, userId, comment) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      const { rows: versions } = await client.query(
+        'INSERT INTO document_version (document_id, content, created_by_id, comment) VALUES ($1, $2::jsonb, $3, $4) RETURNING id',
+        [documentId, JSON.stringify(content), userId, comment]
+      );
+      
+      await client.query(
+        'UPDATE "document" SET updated_at = now() WHERE id = $1',
+        [documentId]
+      );
+      
+      await client.query('COMMIT');
+      return versions[0].id;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
     }
-    const latest = await getLatestGraph(id);
-    res.json(latest?.content || {});
+  }
+
+  static async publishVersion(documentId, versionId, userId) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      await client.query(`
+        UPDATE "document" 
+        SET published_id = $1, published_at = now(), published_by_id = $2
+        WHERE id = $3
+      `, [versionId, userId, documentId]);
+      
+      await client.query('COMMIT');
+      return true;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async getVersions(documentId) {
+    const { rows } = await pool.query(`
+      SELECT dv.id, dv.comment, dv.created_at, dv.status,
+             u.first_name, u.last_name, u.email
+      FROM document_version dv
+      LEFT JOIN "user" u ON dv.created_by_id = u.id
+      WHERE dv.document_id = $1
+      ORDER BY dv.created_at DESC
+    `, [documentId]);
+    return rows;
+  }
+
+  static async getVersionContent(versionId) {
+    const { rows } = await pool.query(
+      'SELECT content FROM document_version WHERE id = $1',
+      [versionId]
+    );
+    return rows[0]?.content || null;
+  }
+}
+
+// ---------- Environment Management ----------
+class EnvironmentService {
+  static async getEnvironments(projectId) {
+    const { rows } = await pool.query(`
+      SELECT e.*, r.name as release_name, r.version as release_version
+      FROM environment e
+      LEFT JOIN "release" r ON e.release_id = r.id
+      WHERE e.project_id = $1 AND e.deleted_at IS NULL
+      ORDER BY e.workflow_order ASC, e.name ASC
+    `, [projectId]);
+    return rows;
+  }
+
+  static async deployToEnvironment(environmentId, releaseId, userId) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      // Crear workflow run
+      const { rows: runs } = await client.query(`
+        INSERT INTO deployment_workflow_run (name, release_id, project_id, created_by_id)
+        SELECT CONCAT('Deploy to ', e.name), $2, e.project_id, $3
+        FROM environment e WHERE e.id = $1
+        RETURNING id, project_id
+      `, [environmentId, releaseId, userId]);
+      
+      const workflowRunId = runs[0].id;
+      const projectId = runs[0].project_id;
+      
+      // Crear job
+      await client.query(`
+        INSERT INTO deployment_workflow_job 
+        (deployment_workflow_run_id, environment_id, project_id, status)
+        VALUES ($1, $2, $3, 'completed')
+      `, [workflowRunId, environmentId, projectId]);
+      
+      // Actualizar environment
+      await client.query(`
+        UPDATE environment 
+        SET release_id = $1 
+        WHERE id = $2
+      `, [releaseId, environmentId]);
+      
+      // Completar workflow
+      await client.query(`
+        UPDATE deployment_workflow_run 
+        SET status = 'completed', completed_at = now()
+        WHERE id = $1
+      `, [workflowRunId]);
+      
+      await client.query('COMMIT');
+      return workflowRunId;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+}
+
+// ---------- Release Management ----------
+class ReleaseService {
+  static async createRelease(projectId, name, description, userId) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      // Obtener próximo número de versión
+      const { rows: versions } = await client.query(
+        'SELECT COALESCE(MAX(version), 0) + 1 as next_version FROM "release" WHERE project_id = $1 AND deleted_at IS NULL',
+        [projectId]
+      );
+      
+      const version = versions[0].next_version;
+      
+      // Crear release
+      const { rows: releases } = await client.query(`
+        INSERT INTO "release" (name, description, version, project_id, created_by_id)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+      `, [name, description, version, projectId, userId]);
+      
+      const releaseId = releases[0].id;
+      
+      // Agregar todos los documentos publicados al release
+      await client.query(`
+        INSERT INTO release_file (release_id, name, path, content_type, content, version_id)
+        SELECT $1, d.name, d.path, d.content_type, dv.content, dv.id
+        FROM "document" d
+        JOIN document_version dv ON d.published_id = dv.id
+        WHERE d.project_id = $2 AND d.deleted_at IS NULL AND d.published_id IS NOT NULL
+      `, [releaseId, projectId]);
+      
+      await client.query('COMMIT');
+      return { id: releaseId, version };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async getReleases(projectId) {
+    const { rows } = await pool.query(`
+      SELECT r.*, u.first_name, u.last_name,
+             (SELECT COUNT(*) FROM release_file rf WHERE rf.release_id = r.id) as file_count
+      FROM "release" r
+      LEFT JOIN "user" u ON r.created_by_id = u.id
+      WHERE r.project_id = $1 AND r.deleted_at IS NULL
+      ORDER BY r.version DESC
+    `, [projectId]);
+    return rows;
+  }
+
+  static async getReleaseFiles(releaseId) {
+    const { rows } = await pool.query(`
+      SELECT rf.* FROM release_file rf
+      WHERE rf.release_id = $1
+      ORDER BY rf.path ASC
+    `, [releaseId]);
+    return rows;
+  }
+}
+
+// ---------- API Endpoints ----------
+
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, timestamp: new Date().toISOString() });
+});
+
+// ========== PROJECTS ==========
+app.get('/api/projects', authenticate, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.id, p.name, p.key, p.created_at, p.updated_at,
+             (SELECT COUNT(*) FROM "document" d WHERE d.project_id = p.id AND d.deleted_at IS NULL) as document_count
+      FROM project p
+      WHERE p.organisation_id = $1 AND p.deleted_at IS NULL
+      ORDER BY p.updated_at DESC
+    `, [req.user.organisationId]);
+    res.json(rows);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// Listar versiones
-app.get('/api/graphs/:id/versions', async (req, res) => {
+// ========== DOCUMENTS ==========
+app.get('/api/documents', authenticate, async (req, res) => {
   try {
-    const id = req.params.id;
-    const versions = await listVersions(id);
+    const projectId = getProject(req);
+    const documents = await DocumentService.listDocuments(projectId);
+    res.json(documents);
+    
+    await auditLog('document', 'list', projectId, {}, req.user.id, projectId, 
+                  req.ip, req.get('User-Agent'));
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/documents/:key', authenticate, async (req, res) => {
+  try {
+    const projectId = getProject(req);
+    const documentKey = req.params.key;
+    const versionId = req.query.version;
+    
+    let content;
+    if (versionId) {
+      content = await DocumentService.getVersionContent(versionId);
+    } else {
+      const doc = await DocumentService.getDocument(projectId, documentKey);
+      content = doc?.content || null;
+    }
+    
+    if (!content) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    
+    res.json(content);
+    
+    await auditLog('document', 'view', documentKey, { versionId }, req.user.id, projectId, 
+                  req.ip, req.get('User-Agent'));
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/documents/:key/versions', authenticate, async (req, res) => {
+  try {
+    const projectId = getProject(req);
+    const documentKey = req.params.key;
+    const { content, comment } = req.body;
+    
+    if (!content) {
+      return res.status(400).json({ error: 'content is required' });
+    }
+    
+    // Obtener o crear documento
+    let doc = await DocumentService.getDocument(projectId, documentKey);
+    if (!doc) {
+      // Crear documento
+      const { rows } = await pool.query(`
+        INSERT INTO "document" (key, path, name, content_type, project_id)
+        VALUES ($1, $2, $3, 'application/vnd.gorules.decision', $4)
+        RETURNING id
+      `, [documentKey, '/' + documentKey, documentKey, projectId]);
+      doc = { id: rows[0].id };
+    }
+    
+    const versionId = await DocumentService.createDocumentVersion(
+      doc.id, content, req.user.id, comment
+    );
+    
+    res.json({ ok: true, documentId: doc.id, versionId });
+    
+    await auditLog('document', 'version_create', documentKey, { versionId, comment }, 
+                  req.user.id, projectId, req.ip, req.get('User-Agent'));
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/documents/:key/publish', authenticate, async (req, res) => {
+  try {
+    const projectId = getProject(req);
+    const documentKey = req.params.key;
+    const { versionId } = req.body;
+    
+    const doc = await DocumentService.getDocument(projectId, documentKey);
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    
+    await DocumentService.publishVersion(doc.id, versionId, req.user.id);
+    
+    res.json({ ok: true, documentId: doc.id, versionId });
+    
+    await auditLog('document', 'publish', documentKey, { versionId }, 
+                  req.user.id, projectId, req.ip, req.get('User-Agent'));
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/documents/:key/versions', authenticate, async (req, res) => {
+  try {
+    const projectId = getProject(req);
+    const documentKey = req.params.key;
+    
+    const doc = await DocumentService.getDocument(projectId, documentKey);
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    
+    const versions = await DocumentService.getVersions(doc.id);
     res.json(versions);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// Publicar una versión (si no mandás version en body, publica la última)
-app.post('/api/graphs/:id/publish', async (req, res) => {
+// ========== RELEASES ==========
+app.get('/api/releases', authenticate, async (req, res) => {
   try {
-    const id = req.params.id;
-    const env = getEnv(req);
-    let version = req.body?.version ? parseInt(String(req.body.version), 10) : null;
-    if (!version) {
-      const latest = await getLatestGraph(id);
-      if (!latest) return res.status(404).json({ error: 'graph not found' });
-      version = latest.version;
+    const projectId = getProject(req);
+    const releases = await ReleaseService.getReleases(projectId);
+    res.json(releases);
+    
+    await auditLog('release', 'list', projectId, {}, req.user.id, projectId, 
+                  req.ip, req.get('User-Agent'));
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/releases', authenticate, async (req, res) => {
+  try {
+    const projectId = getProject(req);
+    const { name, description } = req.body;
+    
+    const release = await ReleaseService.createRelease(projectId, name, description, req.user.id);
+    
+    res.json({ ok: true, ...release });
+    
+    await auditLog('release', 'create', release.id, { name, description, version: release.version }, 
+                  req.user.id, projectId, req.ip, req.get('User-Agent'));
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/releases/:releaseId/files', authenticate, async (req, res) => {
+  try {
+    const releaseId = req.params.releaseId;
+    const files = await ReleaseService.getReleaseFiles(releaseId);
+    res.json(files);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ========== ENVIRONMENTS ==========
+app.get('/api/environments', authenticate, async (req, res) => {
+  try {
+    const projectId = getProject(req);
+    const environments = await EnvironmentService.getEnvironments(projectId);
+    res.json(environments);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/environments/:envId/deploy', authenticate, async (req, res) => {
+  try {
+    const environmentId = req.params.envId;
+    const { releaseId } = req.body;
+    
+    if (!releaseId) {
+      return res.status(400).json({ error: 'releaseId is required' });
     }
-    await setPublished(id, env, version);
-    res.json({ ok: true, id, env, version });
+    
+    const workflowRunId = await EnvironmentService.deployToEnvironment(
+      environmentId, releaseId, req.user.id
+    );
+    
+    res.json({ ok: true, workflowRunId });
+    
+    await auditLog('environment', 'deploy', environmentId, { releaseId }, 
+                  req.user.id, getProject(req), req.ip, req.get('User-Agent'));
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// Consultar versión publicada
-app.get('/api/graphs/:id/published', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const env = getEnv(req);
-    const version = await getPublishedVersion(id, env);
-    res.json({ id, env, version });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Borrar grafo (todas sus versiones)
-app.delete('/api/graphs/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    await deleteGraph(id);
-    res.json({ ok: true, id });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ---------- Simulación ----------
-const simulateHandler = async (req, res) => {
+// ========== SIMULATION (Compatible con tu API actual) ==========
+app.post('/api/simulate/:key?', authenticate, async (req, res) => {
   const started = process.hrtime.bigint();
   try {
-    const id = req.params.id;
+    const documentKey = req.params.key || 'default';
+    const projectId = getProject(req);
     const env = getEnv(req);
     const payload = req.body?.payload ?? {};
-    let model = extractGraphForSim(req.body); // SOLO graph inline si lo mandan
-    let usedVersion = null;
+    
+    let model = req.body?.graph; // graph inline
     let source = 'inline';
-
+    let usedVersion = null;
+    
     if (!model) {
-      const qv = req.query.version ? parseInt(String(req.query.version), 10) : null;
-      if (qv) {
-        model = await getGraphVersion(id, qv);
-        usedVersion = qv; source = 'version';
-      } else {
-        const pubV = await getPublishedVersion(id, env);
-        if (pubV) {
-          model = await getGraphVersion(id, pubV);
-          usedVersion = pubV; source = 'published';
-        } else {
-          const latest = await getLatestGraph(id);
-          model = latest?.content || null;
-          usedVersion = latest?.version || null;
+      // Determinar qué versión usar
+      const versionQuery = req.query.version ? parseInt(String(req.query.version), 10) : null;
+      
+      if (versionQuery) {
+        // Versión específica
+        model = await DocumentService.getVersionContent(versionQuery);
+        usedVersion = versionQuery;
+        source = 'version';
+      } else if (req.query.env || env !== 'dev') {
+        // Buscar en ambiente específico (versión deployada)
+        const { rows } = await pool.query(`
+          SELECT rf.content, r.version
+          FROM environment e
+          JOIN "release" r ON e.release_id = r.id
+          JOIN release_file rf ON rf.release_id = r.id
+          JOIN "document" d ON d.path = rf.path
+          WHERE e.key = $1 AND d.key = $2 AND e.project_id = $3 AND e.deleted_at IS NULL
+          LIMIT 1
+        `, [env, documentKey, projectId]);
+        
+        if (rows.length > 0) {
+          model = rows[0].content;
+          usedVersion = rows[0].version;
+          source = 'deployed';
+        }
+      }
+      
+      // Fallback a versión publicada
+      if (!model) {
+        const doc = await DocumentService.getDocument(projectId, documentKey);
+        if (doc && doc.content) {
+          model = doc.content;
+          source = 'published';
+        }
+      }
+      
+      // Último fallback: última versión
+      if (!model) {
+        const { rows } = await pool.query(`
+          SELECT dv.content
+          FROM "document" d
+          JOIN document_version dv ON dv.document_id = d.id
+          WHERE d.key = $1 AND d.project_id = $2 AND d.deleted_at IS NULL
+          ORDER BY dv.created_at DESC
+          LIMIT 1
+        `, [documentKey, projectId]);
+        
+        if (rows.length > 0) {
+          model = rows[0].content;
           source = 'latest';
         }
       }
     }
-
-    // Defensas por si vino desde DB como string o quedó envuelto en {graph:{...}}
+    
+    // Normalizar modelo
     if (typeof model === 'string') {
       try { model = JSON.parse(model); } catch {}
     }
     if (model && model.graph) model = model.graph;
-
+    
     if (!model || !model.nodes || !model.edges) {
-      return res.status(400).json({ error: 'graph is required (inline or stored) and must contain nodes/edges' });
+      return res.status(400).json({ 
+        error: 'Document not found or invalid graph structure',
+        documentKey,
+        projectId,
+        env
+      });
     }
-
+    
+    // Ejecutar simulación
     const engine = new ZenEngine();
     const decision = engine.createDecision(Buffer.from(JSON.stringify(model)));
     const result = await decision.evaluate(payload);
-
+    
     const micros = Number(process.hrtime.bigint() - started) / 1000;
-    res.json({
+    
+    const response = {
       ok: true,
-      id,
+      documentKey,
+      projectId,
       env,
       usedVersion,
       source,
       performance: `${micros.toFixed(1)}µs`,
-      result
-    });
+      result,
+      timestamp: new Date().toISOString()
+    };
+    
+    res.json(response);
+    
+    // Audit log para simulación
+    await auditLog('simulation', 'execute', documentKey, 
+                  { source, usedVersion, env, performance: response.performance }, 
+                  req.user.id, projectId, req.ip, req.get('User-Agent'));
+                  
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
-};
-
-app.post('/api/simulate/:id', simulateHandler);
-// Compat: permitir /api/simulate (usa id "default")
-app.post('/api/simulate', (req, res) => {
-  req.params = { id: 'default' };
-  return simulateHandler(req, res);
 });
 
-// (Opcional) servir una mini UI en / si agregás carpeta public/
+// ========== WORKFLOW RUNS ==========
+app.get('/api/workflows', authenticate, async (req, res) => {
+  try {
+    const projectId = getProject(req);
+    const { rows } = await pool.query(`
+      SELECT wr.*, r.name as release_name, r.version as release_version,
+             u.first_name, u.last_name,
+             (SELECT COUNT(*) FROM deployment_workflow_job wj WHERE wj.deployment_workflow_run_id = wr.id) as job_count
+      FROM deployment_workflow_run wr
+      LEFT JOIN "release" r ON wr.release_id = r.id
+      LEFT JOIN "user" u ON wr.created_by_id = u.id
+      WHERE wr.project_id = $1
+      ORDER BY wr.created_at DESC
+      LIMIT 50
+    `, [projectId]);
+    
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/workflows/:runId/jobs', authenticate, async (req, res) => {
+  try {
+    const runId = req.params.runId;
+    const { rows } = await pool.query(`
+      SELECT wj.*, e.name as environment_name, e.key as environment_key,
+             u.first_name, u.last_name
+      FROM deployment_workflow_job wj
+      LEFT JOIN environment e ON wj.environment_id = e.id
+      LEFT JOIN "user" u ON wj.reviewed_by_id = u.id
+      WHERE wj.deployment_workflow_run_id = $1
+      ORDER BY wj.order_num ASC
+    `, [runId]);
+    
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ========== AUDIT LOG ==========
+app.get('/api/audit', authenticate, async (req, res) => {
+  try {
+    const projectId = getProject(req);
+    const limit = Math.min(parseInt(req.query.limit || '50'), 200);
+    const offset = parseInt(req.query.offset || '0');
+    const type = req.query.type;
+    const action = req.query.action;
+    
+    let query = `
+      SELECT al.*, u.first_name, u.last_name, u.email
+      FROM audit_log al
+      LEFT JOIN "user" u ON al.user_id = u.id
+      WHERE al.project_id = $1
+    `;
+    const params = [projectId];
+    
+    if (type) {
+      params.push(type);
+      query += ` AND al.type = ${params.length}`;
+    }
+    
+    if (action) {
+      params.push(action);
+      query += ` AND al.action = ${params.length}`;
+    }
+    
+    params.push(limit, offset);
+    query += ` ORDER BY al.created_at DESC LIMIT ${params.length-1} OFFSET ${params.length}`;
+    
+    const { rows } = await pool.query(query, params);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ========== LEGACY COMPATIBILITY ==========
+// Mantener compatibilidad con tu API actual
+app.get('/api/graphs', authenticate, async (req, res) => {
+  try {
+    const projectId = getProject(req);
+    const documents = await DocumentService.listDocuments(projectId);
+    
+    // Formatear como tu API original
+    const graphs = documents.map(d => ({
+      id: d.key,
+      name: d.name,
+      updated_at: d.updated_at,
+      latest_version: d.version_count
+    }));
+    
+    res.json(graphs);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/graphs/:key', authenticate, async (req, res) => {
+  try {
+    const projectId = getProject(req);
+    const documentKey = req.params.key;
+    const versionId = req.query.version;
+    
+    let content;
+    if (versionId) {
+      content = await DocumentService.getVersionContent(versionId);
+    } else {
+      const doc = await DocumentService.getDocument(projectId, documentKey);
+      content = doc?.content || {};
+    }
+    
+    res.json(content);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/graphs/:key', authenticate, async (req, res) => {
+  try {
+    const projectId = getProject(req);
+    const documentKey = req.params.key;
+    const content = req.body.graph || req.body;
+    const comment = req.body.comment;
+    
+    // Reutilizar la lógica de documents
+    req.params.key = documentKey;
+    req.body = { content, comment };
+    
+    // Llamar al endpoint de documents
+    return app._router.handle({
+      ...req,
+      method: 'POST',
+      url: `/api/documents/${documentKey}/versions`
+    }, res);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ========== STATIC FILES ==========
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.listen(PORT, () => {
-  console.log(`zen-sim (pg) listening on :${PORT}`);
+// ========== ERROR HANDLING ==========
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ 
+    ok: false, 
+    error: 'Internal server error',
+    timestamp: new Date().toISOString()
+  });
 });
+
+// ========== STARTUP ==========
+const initializeDatabase = async () => {
+  try {
+    // Verificar si las tablas existen
+    const { rows } = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' AND table_name = 'organisation'
+    `);
+    
+    if (rows.length === 0) {
+      console.log('🔧 Database tables not found. Please run the DDL script first.');
+      console.log('📖 Check the artifacts for the complete schema.');
+    } else {
+      console.log('✅ Database connection established');
+    }
+  } catch (e) {
+    console.error('❌ Database connection failed:', e.message);
+    process.exit(1);
+  }
+};
+
+initializeDatabase().then(() => {
+  app.listen(PORT, () => {
+    console.log(`🚀 BRMS-lite server running on port ${PORT}`);
+    console.log(`📊 API: http://localhost:${PORT}/api/health`);
+    console.log(`🎨 UI: http://localhost:${PORT}/`);
+  });
+}).catch(console.error);

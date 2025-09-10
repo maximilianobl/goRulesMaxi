@@ -1,0 +1,126 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>BRMS-lite Console</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>BRMS-lite Console</h1>
+        <p>Interfaz moderna para gestionar y simular grafos de reglas de negocio</p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Configuración</h2>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="graphId">ID del Grafo</label>
+            <input id="graphId" placeholder="test-graph" value="test-graph" />
+            <div class="help-text">Identificador único del grafo</div>
+          </div>
+          <div class="form-group">
+            <label for="env">Ambiente</label>
+            <input id="env" placeholder="dev" value="dev" />
+            <div class="help-text">Ambiente de ejecución (dev, staging, prod)</div>
+          </div>
+          <div class="form-group">
+            <label for="version">Versión</label>
+            <input id="version" type="number" placeholder="Opcional" />
+            <div class="help-text">Versión específica (vacío = última)</div>
+          </div>
+          <div class="form-group">
+            <label for="simSource">Fuente de Simulación</label>
+            <select id="simSource">
+              <option value="published">Versión Publicada</option>
+              <option value="latest">Última Versión</option>
+              <option value="version">Versión Específica</option>
+              <option value="inline">Desde Editor</option>
+            </select>
+            <div class="help-text">El ambiente solo aplica para “Versión Publicada”.</div>
+          </div>
+        </div>
+
+        <div class="checkbox-group">
+          <input type="checkbox" id="usePublished" checked />
+          <label for="usePublished">Cargar versión publicada si existe</label>
+        </div>
+
+        <div class="button-group">
+          <button id="btnList" class="btn btn-secondary icon-list">Listar Grafos</button>
+          <button id="btnGet" class="btn btn-primary icon-download">Cargar Grafo</button>
+          <button id="btnPublish" class="btn btn-success icon-publish">Publicar</button>
+          <button id="btnSave" class="btn btn-warning icon-save">Guardar Nueva Versión</button>
+          <button id="btnSim" class="btn btn-primary icon-play">Simular</button>
+          <button id="btnVersions" class="btn btn-secondary icon-list">Ver Versiones</button>
+          <button id="btnPublished" class="btn btn-secondary icon-list">Ver Publicadas</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Importar / Exportar</h2>
+        <div class="file-upload">
+          <input type="file" id="fileGraph" accept="application/json,.json" />
+          <label for="fileGraph" class="icon-file">Seleccionar archivo JSON</label>
+          <span class="help-text">Soporta JSON crudo o con wrapper { graph: {...} }</span>
+        </div>
+        <button id="btnExport" class="btn btn-secondary icon-export">Exportar Grafo</button>
+      </div>
+
+      <div class="content-grid">
+        <div class="card">
+          <h2 class="card-title">Editor de Grafo</h2>
+          <div class="textarea-container">
+            <textarea id="graph" placeholder="Pega aquí tu JSON del grafo..."></textarea>
+          </div>
+          <div class="help-text">JSON crudo con nodes/edges o formato { graph: {...} }</div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Payload de Prueba</h2>
+          <div class="textarea-container">
+            <textarea id="payload">{
+                "customerData": {
+                    "propertyValue": 350000,
+                    "propertyAge": 15,
+                    "propertyType": "single-family",
+                    "preferredDeductible": 1500
+                },
+                "riskAssessment": {
+                    "areaRiskLevel": "high",
+                    "claimHistory": {
+                        "pastClaims": 1,
+                        "severityLevel": "low"
+                    }
+                },
+                "additionalRisks": [
+                    {
+                        "type": "flood",
+                        "level": "medium"
+                    },
+                    {
+                        "type": "earthquake",
+                        "level": "low"
+                    }
+                ]
+            }</textarea>
+          </div>
+          <div class="help-text">Datos de entrada para la simulación</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Resultado</h2>
+        <div class="output-container" id="out"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Metadatos</h2>
+        <div class="output-container" id="metaOut"></div>
+      </div>
+    </div>
+
+    <script defer src="/assets/app.js"></script>
+  </body>
+</html>

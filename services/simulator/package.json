@@ -1,0 +1,13 @@
+{
+  "name": "zen-simulator",
+  "version": "1.0.0",
+  "private": true,
+  "main": "server.js",
+  "license": "MIT",
+  "dependencies": {
+    "@gorules/zen-engine": "0.49.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
+  }
+}

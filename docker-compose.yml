@@ -23,7 +23,7 @@ services:
       - TZ=America/Argentina/Buenos_Aires
       - DATA_DIR=/usr/src/app/data
       - ALLOW_ORIGINS=*
-      - DATABASE_URL=postgres://postgres:postgres@host.docker.internal:5432/jdm
+      - DATABASE_URL=postgres://postgres:postgres@host.docker.internal:5432/gorules_brms
     volumes:
       - graphs:/usr/src/app/data
     profiles: ["full"]

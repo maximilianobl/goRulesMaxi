@@ -10,17 +10,20 @@ let state = {
 // API Base URL
 const API_BASE = '/api';
 
+// Crear constante para evitar conflictos con variables del API
+const DOM = window.document;
+
 // Utility functions
 function showNotification(message, type = 'info') {
-  const notification = document.createElement('div');
+  const notification = DOM.createElement('div');
   notification.className = `notification ${type}`;
   notification.textContent = message;
-  document.body.appendChild(notification);
+  DOM.body.appendChild(notification);
 
   setTimeout(() => notification.classList.add('show'), 100);
   setTimeout(() => {
     notification.classList.remove('show');
-    setTimeout(() => document.body.removeChild(notification), 300);
+    setTimeout(() => DOM.body.removeChild(notification), 300);
   }, 3000);
 }
 
@@ -56,15 +59,15 @@ async function apiCall(endpoint, options = {}) {
 // Tab management
 function switchTab(tabName) {
   // Hide all tabs
-  document.querySelectorAll('.tab-content').forEach(tab => {
+  DOM.querySelectorAll('.tab-content').forEach(tab => {
     tab.classList.remove('active');
   });
-  document.querySelectorAll('.tab').forEach(tab => {
+  DOM.querySelectorAll('.tab').forEach(tab => {
     tab.classList.remove('active');
   });
 
   // Show selected tab
-  document.getElementById(`tab-${tabName}`).classList.add('active');
+  DOM.getElementById(`tab-${tabName}`).classList.add('active');
   event.target.classList.add('active');
 
   // Load tab data
@@ -90,11 +93,11 @@ function loadTabData(tabName) {
 
 // Modal management
 function showModal(modalId) {
-  document.getElementById(modalId).classList.add('active');
+  DOM.getElementById(modalId).classList.add('active');
 }
 
 function hideModal(modalId) {
-  document.getElementById(modalId).classList.remove('active');
+  DOM.getElementById(modalId).classList.remove('active');
 }
 
 // Document management
@@ -109,7 +112,7 @@ async function loadDocuments() {
 }
 
 function renderDocumentsTable(documents) {
-  const container = document.getElementById('documentsTable');
+  const container = DOM.getElementById('documentsTable');
 
   if (documents.length === 0) {
     container.innerHTML = '<p>No documents found</p>';
@@ -117,43 +120,45 @@ function renderDocumentsTable(documents) {
   }
 
   const table = `
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Key</th>
-              <th>Name</th>
-              <th>Versions</th>
-              <th>Published</th>
-              <th>Updated</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${documents.map(doc => `
-              <tr>
-                <td><code>${doc.key}</code></td>
-                <td>${doc.name}</td>
-                <td><span class="badge badge-info">${doc.version_count || 0}</span></td>
-                <td>${doc.published_at ? `<span class="badge badge-success">✓</span>` : `<span class="badge badge-warning">✗</span>`}</td>
-                <td>${formatDate(doc.updated_at)}</td>
-                <td>
-                  <button class="btn btn-info" onclick="loadDocument('${doc.key}')">📥 Load</button>
-                  <button class="btn btn-secondary" onclick="viewDocumentVersions('${doc.key}')">📋 Versions</button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      `;
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Key</th>
+          <th>Name</th>
+          <th>Versions</th>
+          <th>Published</th>
+          <th>Updated</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${documents.map(doc => `
+          <tr>
+            <td><code>${doc.key}</code></td>
+            <td>${doc.name}</td>
+            <td><span class="badge badge-info">${doc.version_count || 0}</span></td>
+            <td>${doc.published_at ? `<span class="badge badge-success">✓</span>` : `<span class="badge badge-warning">✗</span>`}</td>
+            <td>${formatDate(doc.updated_at)}</td>
+            <td>
+              <button class="btn btn-info" onclick="loadDocument('${doc.key}')">📥 Load</button>
+              <button class="btn btn-secondary" onclick="viewDocumentVersions('${doc.key}')">📋 Versions</button>
+              <button class="btn btn-danger" onclick="deleteDocument('${doc.key}')" title="Delete document">🗑️ Delete</button>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
 
   container.innerHTML = table;
 }
 
 async function loadDocument(key) {
   try {
-    const document = await apiCall(`/documents/${key}`);
-    document.getElementById('documentKey').value = key;
-    document.getElementById('documentContent').value = formatJSON(document);
+    // Cambiar nombre de variable para evitar conflicto con DOM document
+    const documentData = await apiCall(`/documents/${key}`);
+    DOM.getElementById('documentKey').value = key;
+    DOM.getElementById('documentContent').value = formatJSON(documentData);
     state.selectedDocument = key;
     showNotification(`Document ${key} loaded`, 'success');
 
@@ -161,6 +166,7 @@ async function loadDocument(key) {
     await loadDocumentInfo(key);
   } catch (error) {
     console.error('Failed to load document:', error);
+    showNotification(`Failed to load document: ${error.message}`, 'error');
   }
 }
 
@@ -170,11 +176,12 @@ async function loadDocumentInfo(key) {
     renderDocumentInfo(key, versions);
   } catch (error) {
     console.error('Failed to load document info:', error);
+    showNotification(`Failed to load document info: ${error.message}`, 'error');
   }
 }
 
 function renderDocumentInfo(key, versions) {
-  const container = document.getElementById('documentInfo');
+  const container = DOM.getElementById('documentInfo');
   const info = `
         <h4>Document: ${key}</h4>
         <p><strong>Total Versions:</strong> ${versions.length}</p>
@@ -186,7 +193,7 @@ function renderDocumentInfo(key, versions) {
 }
 
 function renderVersionsTable(versions) {
-  const container = document.getElementById('versionsTable');
+  const container = DOM.getElementById('versionsTable');
 
   if (versions.length === 0) {
     container.innerHTML = '<p>No versions found</p>';
@@ -225,9 +232,9 @@ function renderVersionsTable(versions) {
 }
 
 async function saveDocumentVersion() {
-  const key = document.getElementById('documentKey').value;
-  const content = document.getElementById('documentContent').value;
-  const comment = document.getElementById('versionComment').value;
+  const key = DOM.getElementById('documentKey').value;
+  const content = DOM.getElementById('documentContent').value;
+  const comment = DOM.getElementById('versionComment').value;
 
   if (!key || !content) {
     showNotification('Document key and content are required', 'error');
@@ -242,11 +249,12 @@ async function saveDocumentVersion() {
     });
 
     showNotification('Document version saved successfully', 'success');
-    document.getElementById('versionComment').value = '';
+    DOM.getElementById('versionComment').value = '';
     await loadDocumentInfo(key);
     await loadDocuments();
   } catch (error) {
     console.error('Failed to save document version:', error);
+    showNotification(`Failed to save version: ${error.message}`, 'error');
   }
 }
 
@@ -268,6 +276,7 @@ async function publishVersion(versionId) {
     await loadDocuments();
   } catch (error) {
     console.error('Failed to publish document:', error);
+    showNotification(`Failed to publish: ${error.message}`, 'error');
   }
 }
 
@@ -285,11 +294,12 @@ async function loadReleases() {
     populateReleaseSelect(releases);
   } catch (error) {
     console.error('Failed to load releases:', error);
+    showNotification(`Failed to load releases: ${error.message}`, 'error');
   }
 }
 
 function renderReleasesTable(releases) {
-  const container = document.getElementById('releasesTable');
+  const container = DOM.getElementById('releasesTable');
 
   if (releases.length === 0) {
     container.innerHTML = '<p>No releases found</p>';
@@ -332,8 +342,8 @@ function renderReleasesTable(releases) {
 }
 
 async function createRelease() {
-  const name = document.getElementById('releaseName').value;
-  const description = document.getElementById('releaseDescription').value;
+  const name = DOM.getElementById('releaseName').value;
+  const description = DOM.getElementById('releaseDescription').value;
 
   if (!name) {
     showNotification('Release name is required', 'error');
@@ -347,11 +357,12 @@ async function createRelease() {
     });
 
     showNotification(`Release v${result.version} created successfully`, 'success');
-    document.getElementById('releaseName').value = '';
-    document.getElementById('releaseDescription').value = '';
+    DOM.getElementById('releaseName').value = '';
+    DOM.getElementById('releaseDescription').value = '';
     await loadReleases();
   } catch (error) {
     console.error('Failed to create release:', error);
+    showNotification(`Failed to create release: ${error.message}`, 'error');
   }
 }
 
@@ -362,11 +373,12 @@ async function viewReleaseFiles(releaseId) {
     state.selectedRelease = releaseId;
   } catch (error) {
     console.error('Failed to load release files:', error);
+    showNotification(`Failed to load release files: ${error.message}`, 'error');
   }
 }
 
 function renderReleaseFiles(files) {
-  const container = document.getElementById('releaseFiles');
+  const container = DOM.getElementById('releaseFiles');
 
   if (files.length === 0) {
     container.innerHTML = '<p>No files in this release</p>';
@@ -403,11 +415,11 @@ function renderReleaseFiles(files) {
 }
 
 function populateReleaseSelect(releases) {
-  const select = document.getElementById('deployRelease');
+  const select = DOM.getElementById('deployRelease');
   select.innerHTML = '<option value="">Select release...</option>';
 
   releases.forEach(release => {
-    const option = document.createElement('option');
+    const option = DOM.createElement('option');
     option.value = release.id;
     option.textContent = `v${release.version} - ${release.name || 'Unnamed'}`;
     select.appendChild(option);
@@ -415,7 +427,7 @@ function populateReleaseSelect(releases) {
 }
 
 function selectReleaseForDeploy(releaseId, releaseName, version) {
-  document.getElementById('deployRelease').value = releaseId;
+  DOM.getElementById('deployRelease').value = releaseId;
   switchTab('environments');
   showNotification(`Selected release v${version} for deployment`, 'info');
 }
@@ -429,11 +441,12 @@ async function loadEnvironments() {
     populateEnvironmentSelect(environments);
   } catch (error) {
     console.error('Failed to load environments:', error);
+    showNotification(`Failed to load environments: ${error.message}`, 'error');
   }
 }
 
 function renderEnvironmentsTable(environments) {
-  const container = document.getElementById('environmentsTable');
+  const container = DOM.getElementById('environmentsTable');
 
   if (environments.length === 0) {
     container.innerHTML = '<p>No environments found</p>';
@@ -473,11 +486,11 @@ function renderEnvironmentsTable(environments) {
 }
 
 function populateEnvironmentSelect(environments) {
-  const select = document.getElementById('deployEnvironment');
+  const select = DOM.getElementById('deployEnvironment');
   select.innerHTML = '<option value="">Select environment...</option>';
 
   environments.forEach(env => {
-    const option = document.createElement('option');
+    const option = DOM.createElement('option');
     option.value = env.id;
     option.textContent = env.name;
     select.appendChild(option);
@@ -485,13 +498,13 @@ function populateEnvironmentSelect(environments) {
 }
 
 function selectEnvironmentForDeploy(envId, envName) {
-  document.getElementById('deployEnvironment').value = envId;
+  DOM.getElementById('deployEnvironment').value = envId;
   showNotification(`Selected environment: ${envName}`, 'info');
 }
 
 async function deployRelease() {
-  const environmentId = document.getElementById('deployEnvironment').value;
-  const releaseId = document.getElementById('deployRelease').value;
+  const environmentId = DOM.getElementById('deployEnvironment').value;
+  const releaseId = DOM.getElementById('deployRelease').value;
 
   if (!environmentId || !releaseId) {
     showNotification('Please select both environment and release', 'error');
@@ -509,6 +522,7 @@ async function deployRelease() {
     await loadWorkflows();
   } catch (error) {
     console.error('Failed to deploy release:', error);
+    showNotification(`Failed to deploy: ${error.message}`, 'error');
   }
 }
 
@@ -518,11 +532,12 @@ async function loadWorkflows() {
     renderWorkflowsTable(workflows);
   } catch (error) {
     console.error('Failed to load workflows:', error);
+    showNotification(`Failed to load workflows: ${error.message}`, 'error');
   }
 }
 
 function renderWorkflowsTable(workflows) {
-  const container = document.getElementById('workflowsTable');
+  const container = DOM.getElementById('workflowsTable');
 
   if (workflows.length === 0) {
     container.innerHTML = '<p>No deployment history</p>';
@@ -560,10 +575,10 @@ function renderWorkflowsTable(workflows) {
 
 // Simulation
 async function runSimulation() {
-  const documentKey = document.getElementById('simDocumentKey').value;
-  const environment = document.getElementById('simEnvironment').value;
-  const version = document.getElementById('simVersion').value;
-  const payloadText = document.getElementById('simulationPayload').value;
+  const documentKey = DOM.getElementById('simDocumentKey').value;
+  const environment = DOM.getElementById('simEnvironment').value;
+  const version = DOM.getElementById('simVersion').value;
+  const payloadText = DOM.getElementById('simulationPayload').value;
 
   if (!documentKey) {
     showNotification('Document key is required', 'error');
@@ -594,19 +609,20 @@ async function runSimulation() {
       body: JSON.stringify({ payload })
     });
 
-    document.getElementById('simulationOutput').textContent = formatJSON(result);
+    DOM.getElementById('simulationOutput').textContent = formatJSON(result);
     showNotification('Simulation completed successfully', 'success');
   } catch (error) {
-    document.getElementById('simulationOutput').textContent = `Error: ${error.message}`;
+    DOM.getElementById('simulationOutput').textContent = `Error: ${error.message}`;
     console.error('Failed to run simulation:', error);
+    showNotification(`Simulation failed: ${error.message}`, 'error');
   }
 }
 
 // Audit log
 async function loadAuditLog() {
-  const type = document.getElementById('auditType').value;
-  const action = document.getElementById('auditAction').value;
-  const limit = document.getElementById('auditLimit').value;
+  const type = DOM.getElementById('auditType').value;
+  const action = DOM.getElementById('auditAction').value;
+  const limit = DOM.getElementById('auditLimit').value;
 
   try {
     const params = new URLSearchParams();
@@ -616,14 +632,16 @@ async function loadAuditLog() {
 
     const url = '/audit' + (params.toString() ? '?' + params.toString() : '');
     const auditLogs = await apiCall(url);
+    state.auditLogs = auditLogs; // Guardar en state para viewAuditData
     renderAuditTable(auditLogs);
   } catch (error) {
     console.error('Failed to load audit log:', error);
+    showNotification(`Failed to load audit log: ${error.message}`, 'error');
   }
 }
 
 function renderAuditTable(auditLogs) {
-  const container = document.getElementById('auditTable');
+  const container = DOM.getElementById('auditTable');
 
   if (auditLogs.length === 0) {
     container.innerHTML = '<p>No audit logs found</p>';
@@ -666,13 +684,15 @@ function viewAuditData(logId) {
   const log = state.auditLogs?.find(l => l.id === logId);
   if (log && log.data) {
     alert(formatJSON(log.data));
+  } else {
+    showNotification('No data available for this log entry', 'warning');
   }
 }
 
 // File upload
 async function processUpload() {
-  const fileInput = document.getElementById('uploadFile');
-  const key = document.getElementById('uploadKey').value;
+  const fileInput = DOM.getElementById('uploadFile');
+  const key = DOM.getElementById('uploadKey').value;
 
   if (!fileInput.files[0]) {
     showNotification('Please select a file', 'error');
@@ -700,50 +720,91 @@ async function processUpload() {
     showNotification('File uploaded successfully', 'success');
     hideModal('modalUpload');
     fileInput.value = '';
-    document.getElementById('uploadKey').value = '';
+    DOM.getElementById('uploadKey').value = '';
     await loadDocuments();
   } catch (error) {
     console.error('Failed to upload file:', error);
+    showNotification(`Upload failed: ${error.message}`, 'error');
+  }
+}
+
+async function checkConnectionStatus() {
+  try {
+    await apiCall('/health');
+    DOM.getElementById('connectionStatus').textContent = '● Connected';
+    DOM.getElementById('connectionStatus').className = 'status-indicator status-online';
+  } catch (error) {
+    DOM.getElementById('connectionStatus').textContent = '● Disconnected';
+    DOM.getElementById('connectionStatus').className = 'status-indicator badge-danger';
+  }
+}
+
+
+async function deleteDocument(key) {
+  if (!confirm(`Are you sure you want to delete document "${key}"? This action cannot be undone.`)) {
+    return;
+  }
+  
+  try {
+    await apiCall(`/documents/${key}`, {
+      method: 'DELETE'
+    });
+    
+    showNotification(`Document ${key} deleted successfully`, 'success');
+    
+    // Limpiar el editor si el documento eliminado estaba cargado
+    if (state.selectedDocument === key) {
+      DOM.getElementById('documentKey').value = '';
+      DOM.getElementById('documentContent').value = '';
+      DOM.getElementById('documentInfo').innerHTML = '<p>Select a document to view information</p>';
+      DOM.getElementById('versionsTable').innerHTML = '';
+      state.selectedDocument = null;
+    }
+    
+    // Recargar la lista
+    await loadDocuments();
+  } catch (error) {
+    console.error('Failed to delete document:', error);
+    showNotification(`Failed to delete document: ${error.message}`, 'error');
   }
 }
 
 // Event listeners
-document.addEventListener('DOMContentLoaded', function () {
+DOM.addEventListener('DOMContentLoaded', function () {
   // Button event listeners
-  document.getElementById('btnListDocuments').onclick = loadDocuments;
-  document.getElementById('btnLoadDocument').onclick = () => {
-    const key = document.getElementById('documentKey').value;
+  DOM.getElementById('btnListDocuments').onclick = loadDocuments;
+  DOM.getElementById('btnLoadDocument').onclick = () => {
+    const key = DOM.getElementById('documentKey').value;
     if (key) loadDocument(key);
   };
-  document.getElementById('btnSaveVersion').onclick = saveDocumentVersion;
-  document.getElementById('btnPublishDocument').onclick = () => {
-    const key = document.getElementById('documentKey').value;
+  DOM.getElementById('btnSaveVersion').onclick = saveDocumentVersion;
+  DOM.getElementById('btnPublishDocument').onclick = () => {
+    const key = DOM.getElementById('documentKey').value;
     if (key) {
-      // For simplicity, publish the latest version
       showNotification('Please use the version table to publish specific versions', 'info');
     }
   };
 
-  document.getElementById('btnListReleases').onclick = loadReleases;
-  document.getElementById('btnCreateRelease').onclick = createRelease;
-  document.getElementById('btnSubmitRelease').onclick = createRelease;
+  DOM.getElementById('btnListReleases').onclick = loadReleases;
+  DOM.getElementById('btnCreateRelease').onclick = createRelease;
+  DOM.getElementById('btnSubmitRelease').onclick = createRelease;
 
-  document.getElementById('btnListEnvironments').onclick = loadEnvironments;
-  document.getElementById('btnListWorkflows').onclick = loadWorkflows;
-  document.getElementById('btnDeployRelease').onclick = deployRelease;
+  DOM.getElementById('btnListEnvironments').onclick = loadEnvironments;
+  DOM.getElementById('btnListWorkflows').onclick = loadWorkflows;
+  DOM.getElementById('btnDeployRelease').onclick = deployRelease;
 
-  document.getElementById('btnRunSimulation').onclick = runSimulation;
+  DOM.getElementById('btnRunSimulation').onclick = runSimulation;
 
-  document.getElementById('btnLoadAudit').onclick = loadAuditLog;
-  document.getElementById('btnExportAudit').onclick = () => {
+  DOM.getElementById('btnLoadAudit').onclick = loadAuditLog;
+  DOM.getElementById('btnExportAudit').onclick = () => {
     showNotification('Export functionality coming soon', 'info');
   };
 
-  document.getElementById('btnProcessUpload').onclick = processUpload;
+  DOM.getElementById('btnProcessUpload').onclick = processUpload;
 
   // Format JSON on blur
   ['documentContent', 'simulationPayload'].forEach(id => {
-    document.getElementById(id).addEventListener('blur', function () {
+    DOM.getElementById(id).addEventListener('blur', function () {
       try {
         const parsed = JSON.parse(this.value);
         this.value = formatJSON(parsed);
@@ -759,17 +820,6 @@ document.addEventListener('DOMContentLoaded', function () {
   // Check connection status
   checkConnectionStatus();
 });
-
-async function checkConnectionStatus() {
-  try {
-    await apiCall('/health');
-    document.getElementById('connectionStatus').textContent = '● Connected';
-    document.getElementById('connectionStatus').className = 'status-indicator status-online';
-  } catch (error) {
-    document.getElementById('connectionStatus').textContent = '● Disconnected';
-    document.getElementById('connectionStatus').className = 'status-indicator badge-danger';
-  }
-}
 
 // Auto-refresh connection status every 30 seconds
 setInterval(checkConnectionStatus, 30000);

@@ -6,6 +6,8 @@ docker compose --profile full up -d
 ##Si solo querés la UI: docker compose --profile editor up -d.
 
 
+https://www.npmjs.com/package/@gorules/zen-engine
+
 
 
 
